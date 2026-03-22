@@ -132,6 +132,11 @@ fn main() -> Result<()> {
                     return;
                 }
 
+                // Ensure ydotoold is running before we need it
+                if st.config.inject_method == InjectMethod::Ydotool {
+                    injector::ensure_ydotoold_running();
+                }
+
                 if !injector::check_inject_tool(&st.config.inject_method) {
                     let tool = match st.config.inject_method {
                         InjectMethod::Wtype => "wtype",
@@ -244,6 +249,11 @@ fn main() -> Result<()> {
                 1 => InjectMethod::Ydotool,
                 _ => InjectMethod::Wtype,
             };
+            // Start ydotoold immediately when the user switches to ydotool
+            // so the daemon is ready before the first dictation session.
+            if method == InjectMethod::Ydotool {
+                std::thread::spawn(|| injector::ensure_ydotoold_running());
+            }
             let mut st = state_clone.lock().unwrap();
             st.config.inject_method = method;
             let _ = st.config.save();

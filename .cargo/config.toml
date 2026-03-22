@@ -12,6 +12,16 @@ CXXFLAGS = "-stdlib=libc++ -I/home/linuxbrew/.linuxbrew/include/c++/v1"
 # Compile-time library search path — lets cmake's build find libc++.
 LIBRARY_PATH = "/home/linuxbrew/.linuxbrew/lib:/usr/lib64:/usr/lib"
 
+# Runtime library path for intermediate build tools (e.g. vulkan-shaders-gen
+# compiled by whisper.cpp's cmake build). Without this those tools can't find
+# libc++.so.1 when cmake runs them as build steps.
+LD_LIBRARY_PATH = "/home/linuxbrew/.linuxbrew/lib"
+
+# Embed the linuxbrew lib rpath into ALL executables cmake compiles
+# (including intermediate tools like vulkan-shaders-gen). Without this the
+# tools fail to load libc++.so.1 when cmake runs them during make.
+CMAKE_EXE_LINKER_FLAGS = "-Wl,-rpath,/home/linuxbrew/.linuxbrew/lib -L/home/linuxbrew/.linuxbrew/lib"
+
 [target.x86_64-unknown-linux-gnu]
 # rust-lld uses -nodefaultlibs so standard lib paths aren't searched.
 # .locallib/ has libstdc++.so → libc++.so (ABI redirect: whisper compiled against libc++).

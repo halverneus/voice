@@ -1,4 +1,5 @@
 use crate::config::InjectMethod;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -18,9 +19,6 @@ pub fn inject_text(text: &str, method: &InjectMethod, delay_ms: u64) {
 }
 
 fn inject_wtype(text: &str) {
-    // wtype uses the Wayland virtual-keyboard protocol; no daemon needed.
-    // Pass text as a single argument — Command::arg() doesn't invoke a shell,
-    // so no escaping is needed.
     match Command::new("wtype").arg(text).output() {
         Ok(out) if !out.status.success() => {
             let err = String::from_utf8_lossy(&out.stderr);
@@ -32,8 +30,6 @@ fn inject_wtype(text: &str) {
 }
 
 fn inject_ydotool(text: &str) {
-    // ydotool requires the ydotoold daemon. If YDOTOOL_SOCKET is not set,
-    // ydotool looks for /tmp/.ydotool_socket by default.
     match Command::new("ydotool")
         .args(["type", "--key-delay", "0", "--", text])
         .output()
@@ -56,11 +52,53 @@ pub fn check_inject_tool(method: &InjectMethod) -> bool {
     which_in_path(tool)
 }
 
+/// Ensure `ydotoold` is running.
+///
+/// Checks whether the ydotoold socket already exists. If it doesn't, spawns
+/// `ydotoold` in the background and waits up to ~500 ms for the socket to
+/// appear. Safe to call multiple times — does nothing if the daemon is
+/// already up.
+pub fn ensure_ydotoold_running() {
+    let socket = ydotool_socket_path();
+
+    if socket.exists() {
+        log::debug!("ydotoold already running (socket {})", socket.display());
+        return;
+    }
+
+    log::info!("ydotoold socket not found — starting ydotoold in background");
+
+    // Spawn detached. Dropping the Child handle on Linux does NOT kill the
+    // child process; it lives on as a daemon.
+    match Command::new("ydotoold").spawn() {
+        Ok(_child) => {
+            // Wait for the socket to appear (up to 500 ms, checking every 50 ms)
+            for _ in 0..10 {
+                std::thread::sleep(Duration::from_millis(50));
+                if socket.exists() {
+                    log::info!("ydotoold started successfully");
+                    return;
+                }
+            }
+            log::warn!(
+                "ydotoold spawned but socket {} not found after 500 ms — \
+                 it may need uinput permission (add user to `input` group)",
+                socket.display()
+            );
+        }
+        Err(e) => log::error!("Failed to start ydotoold: {}", e),
+    }
+}
+
+/// Returns the ydotoold socket path: $YDOTOOL_SOCKET or /tmp/.ydotool_socket.
+fn ydotool_socket_path() -> PathBuf {
+    std::env::var_os("YDOTOOL_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/.ydotool_socket"))
+}
+
 fn which_in_path(name: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths)
-                .any(|p| p.join(name).is_file())
-        })
+        .map(|paths| std::env::split_paths(&paths).any(|p| p.join(name).is_file()))
         .unwrap_or(false)
 }
