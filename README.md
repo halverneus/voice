@@ -131,7 +131,27 @@ if background noise triggers false speech. Lower it if you need to speak quietly
 - Lower `silence_duration_ms` to 300–400.
 
 **Vulkan build fails:**
-- Make sure `vulkan-loader-devel` and `glslang` are installed (they are on this system).
+- Make sure `vulkan-loader-devel` and `shaderc` (for `glslc`) are installed:
+  `brew install shaderc`
+- The Vulkan build requires a one-time patch to whisper.cpp's cmake build cache
+  to propagate linker flags to the `vulkan-shaders-gen` sub-project. This patch
+  is applied automatically on the first successful build. **If you run
+  `cargo clean` and rebuild with `--features vulkan`, the patch is lost** and
+  the build will fail with `libc++.so.1: cannot open shared object file`.
+  To recover:
+  ```bash
+  # Let cmake extract the whisper.cpp source (will fail — that's expected):
+  cargo build --release --features vulkan 2>/dev/null || true
+
+  # Find and patch the cmake file:
+  CMAKEFILE=$(find target/release/build/whisper-rs-sys-*/out/whisper.cpp/ggml/src/ggml-vulkan/CMakeLists.txt 2>/dev/null | head -1)
+  sed -i 's/    include(ExternalProject)/    include(ExternalProject)\n\n    # Propagate linker flags so vulkan-shaders-gen embeds rpath for libc++ (linuxbrew)\n    if (CMAKE_EXE_LINKER_FLAGS)\n        list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}")\n    endif()/' "$CMAKEFILE"
+
+  # Clean the cmake cache (not the source) and rebuild:
+  rm -f target/release/build/whisper-rs-sys-*/out/build/CMakeCache.txt
+  rm -rf target/release/build/whisper-rs-sys-*/out/build/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix
+  cargo build --release --features vulkan
+  ```
 
 **CUDA build fails:**
 - Need CUDA toolkit headers: check if `cuda-devel` is available via brew or another source.
