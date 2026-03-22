@@ -1,0 +1,24 @@
+[env]
+# Linuxbrew has fontconfig + freetype2 + expat .pc files and headers.
+PKG_CONFIG_PATH = "/var/home/linuxbrew/.linuxbrew/lib/pkgconfig"
+
+# Immutable Fedora doesn't have g++/c++ on PATH. Use linuxbrew clang.
+CXX = "/home/linuxbrew/.linuxbrew/bin/clang++"
+CC  = "/home/linuxbrew/.linuxbrew/bin/clang"
+
+# Tell clang++ to use libc++ (linuxbrew ships it) for C++ stdlib headers.
+CXXFLAGS = "-stdlib=libc++ -I/home/linuxbrew/.linuxbrew/include/c++/v1"
+
+# Compile-time library search path — lets cmake's build find libc++.
+LIBRARY_PATH = "/home/linuxbrew/.linuxbrew/lib:/usr/lib64:/usr/lib"
+
+[target.x86_64-unknown-linux-gnu]
+# rust-lld uses -nodefaultlibs so standard lib paths aren't searched.
+# .locallib/ has libstdc++.so → libc++.so (ABI redirect: whisper compiled against libc++).
+# rpath embeds the linuxbrew lib path into the binary so libc++.so.1 is found at runtime.
+rustflags = [
+    "-L/var/home/jstreets/Dev/halverneus/voice/.locallib",
+    "-L/usr/lib64",
+    "-L/usr/lib",
+    "-C", "link-arg=-Wl,-rpath,/home/linuxbrew/.linuxbrew/lib",
+]

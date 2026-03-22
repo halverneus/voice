@@ -1,0 +1,223 @@
+import { Button, ComboBox, VerticalBox, HorizontalBox, ScrollView, ProgressIndicator } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "Voice Dictation";
+    preferred-width: 400px;
+    preferred-height: 220px;
+    min-width: 320px;
+    background: #1e1e2e;
+
+    // --- State properties ---
+    in-out property <bool>   is-listening: false;
+    in-out property <bool>   is-processing: false;
+    in-out property <bool>   is-loading: false;       // loading model
+    in-out property <string> status-text: "Ready";
+    in-out property <string> transcript: "";
+
+    // Model selection
+    in-out property <[string]> model-names: [];
+    in-out property <int>      model-index: 0;
+    in-out property <bool>     model-missing: false;  // selected model file not on disk
+    in-out property <bool>     downloading: false;
+    in-out property <string>   download-status: "";
+    in-out property <float>    download-progress: 0;  // 0.0–1.0
+
+    // Mic selection
+    in-out property <[string]> device-names: [];
+    in-out property <int>      device-index: 0;
+
+    // Inject method: 0 = wtype, 1 = ydotool
+    in-out property <int> inject-method-index: 0;
+
+    // Settings visibility
+    in-out property <bool> show-settings: false;
+
+    // --- Callbacks ---
+    callback toggle-dictation();
+    callback model-changed(int);
+    callback device-changed(int);
+    callback inject-method-changed(int);
+    callback download-model();
+
+    // ---- Layout ----
+    VerticalBox {
+        padding: 10px;
+        spacing: 8px;
+
+        // ── Status row ──────────────────────────────────────────────────────
+        HorizontalBox {
+            spacing: 8px;
+            alignment: start;
+
+            // Coloured dot
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                border-radius: 5px;
+                background: root.is-loading    ? #f9a825 :
+                            root.is-processing ? #f9a825 :
+                            root.is-listening  ? #a6e3a1 :
+                                                 #45475a;
+                animate background { duration: 200ms; }
+            }
+
+            Text {
+                text: root.status-text;
+                color: #cdd6f4;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        // ── Transcript box ──────────────────────────────────────────────────
+        Rectangle {
+            height: 72px;
+            border-radius: 6px;
+            background: #181825;
+            border-width: 1px;
+            border-color: #313244;
+            clip: true;
+
+            Text {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                text: root.transcript;
+                color: #cdd6f4;
+                font-size: 12px;
+                wrap: word-wrap;
+                vertical-alignment: top;
+                overflow: elide;
+            }
+        }
+
+        // ── Control row ─────────────────────────────────────────────────────
+        HorizontalBox {
+            spacing: 6px;
+
+            Button {
+                text: root.is-listening ? "■  Stop" : "●  Start";
+                enabled: !root.is-loading && !root.downloading;
+                min-width: 90px;
+                clicked => { root.toggle-dictation(); }
+            }
+
+            // Spacer
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                text: root.show-settings ? "▲ Settings" : "⚙ Settings";
+                clicked => { root.show-settings = !root.show-settings; }
+            }
+        }
+
+        // ── Settings panel (collapsible) ────────────────────────────────────
+        if root.show-settings : Rectangle {
+            border-radius: 6px;
+            background: #181825;
+            border-width: 1px;
+            border-color: #313244;
+
+            VerticalBox {
+                padding: 8px;
+                spacing: 6px;
+
+                // Model row
+                HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "Model";
+                        color: #a6adc8;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        min-width: 46px;
+                    }
+
+                    ComboBox {
+                        model: root.model-names;
+                        current-index <=> root.model-index;
+                        horizontal-stretch: 1;
+                        selected => {
+                            root.model-changed(self.current-index);
+                        }
+                    }
+                }
+
+                // Mic row
+                HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "Mic";
+                        color: #a6adc8;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        min-width: 46px;
+                    }
+
+                    ComboBox {
+                        model: root.device-names;
+                        current-index <=> root.device-index;
+                        horizontal-stretch: 1;
+                        selected => {
+                            root.device-changed(self.current-index);
+                        }
+                    }
+                }
+
+                // Inject method row
+                HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "Inject";
+                        color: #a6adc8;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        min-width: 46px;
+                    }
+
+                    ComboBox {
+                        model: ["wtype (Wayland)", "ydotool (uinput)"];
+                        current-index <=> root.inject-method-index;
+                        horizontal-stretch: 1;
+                        selected => {
+                            root.inject-method-changed(self.current-index);
+                        }
+                    }
+                }
+
+                // Download row (only when model file is missing)
+                if root.model-missing : HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Button {
+                        text: root.downloading ? "Downloading…" : "Download Model";
+                        enabled: !root.downloading;
+                        clicked => { root.download-model(); }
+                    }
+
+                    if root.downloading : ProgressIndicator {
+                        progress: root.download-progress;
+                        vertical-stretch: 0;
+                        min-width: 80px;
+                    }
+
+                    Text {
+                        text: root.download-status;
+                        color: #a6adc8;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
+    }
+}

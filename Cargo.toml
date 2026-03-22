@@ -1,0 +1,39 @@
+[package]
+name = "voice"
+version = "0.1.0"
+edition = "2021"
+description = "Live speech-to-text dictation using Whisper.cpp"
+
+[[bin]]
+name = "voice"
+path = "src/main.rs"
+
+[dependencies]
+whisper-rs = { version = "0.16", default-features = false }
+cpal = "0.17"
+slint = "1.15"
+# voice_activity_detector removed: its ort-sys (ONNX Runtime) is a precompiled
+# libstdc++ binary that conflicts with whisper-rs-sys compiled against libc++.
+# Using an energy-based VAD instead — see src/vad.rs.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+dirs = "5"
+reqwest = { version = "0.12", features = ["blocking"] }
+
+[features]
+# Build with: cargo build --release --features cuda
+# or:         cargo build --release --features vulkan
+default = []
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
+
+[build-dependencies]
+slint-build = "1.15"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
