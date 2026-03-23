@@ -60,6 +60,42 @@ cargo build --release --features cuda
 
 The binary lands at `target/release/voice`.
 
+### Install to application menu (KDE / Wayland)
+
+To add Voice to your KDE application menu with a microphone icon:
+
+```bash
+# Copy the binary
+cp target/release/voice ~/.local/bin/voice
+
+# Create the desktop entry
+cat > ~/.local/share/applications/voice.desktop <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Voice
+Comment=Live Whisper speech-to-text dictation
+Exec=/home/YOUR_USERNAME/.local/bin/voice
+Icon=audio-input-microphone
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=dictation;speech;whisper;microphone;voice;transcription;
+StartupWMClass=voice
+EOF
+
+# Register with the desktop database
+update-desktop-database ~/.local/share/applications/
+```
+
+Replace `YOUR_USERNAME` with your actual username. The `audio-input-microphone`
+icon is provided by the Breeze theme and needs no separate download.
+
+After a rebuild, update the installed binary with:
+
+```bash
+cp target/release/voice ~/.local/bin/voice
+```
+
 ### Why linuxbrew clang++ instead of system gcc?
 
 The immutable Fedora base image ships `libstdc++.so.6` (runtime) but not the
