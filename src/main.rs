@@ -5,7 +5,7 @@ mod injector;
 mod transcriber;
 mod vad;
 
-use crate::config::{Config, InjectMethod, MODELS};
+use crate::config::{Config, InjectMethod, OutputMode, MODELS};
 use anyhow::Result;
 use slint::{ModelRc, SharedString, VecModel};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,6 +87,17 @@ fn main() -> Result<()> {
         window.set_inject_method_index(idx);
     }
 
+    // ── Set output mode + file path ──────────────────────────────────────────
+    {
+        let st = state.lock().unwrap();
+        let idx = match st.config.output_mode {
+            OutputMode::Inject => 0i32,
+            OutputMode::File   => 1i32,
+        };
+        window.set_output_mode_index(idx);
+        window.set_output_file_path(st.config.output_file.clone().into());
+    }
+
     // ── Check model exists ────────────────────────────────────────────────────
     {
         let st = state.lock().unwrap();
@@ -132,22 +143,36 @@ fn main() -> Result<()> {
                     return;
                 }
 
-                // Ensure ydotoold is running before we need it
-                if st.config.inject_method == InjectMethod::Ydotool {
-                    injector::ensure_ydotoold_running();
-                }
-
-                if !injector::check_inject_tool(&st.config.inject_method) {
-                    let tool = match st.config.inject_method {
-                        InjectMethod::Wtype => "wtype",
-                        InjectMethod::Ydotool => "ydotool",
-                    };
-                    if let Some(w) = window_weak.upgrade() {
-                        w.set_status_text(
-                            format!("'{}' not found in PATH — install it first", tool).into(),
-                        );
+                // Validate prerequisites based on output mode
+                match st.config.output_mode {
+                    OutputMode::Inject => {
+                        if st.config.inject_method == InjectMethod::Ydotool {
+                            injector::ensure_ydotoold_running();
+                        }
+                        if !injector::check_inject_tool(&st.config.inject_method) {
+                            let tool = match st.config.inject_method {
+                                InjectMethod::Wtype   => "wtype",
+                                InjectMethod::Ydotool => "ydotool",
+                            };
+                            if let Some(w) = window_weak.upgrade() {
+                                w.set_status_text(
+                                    format!("'{}' not found in PATH — install it first", tool).into(),
+                                );
+                            }
+                            return;
+                        }
                     }
-                    return;
+                    OutputMode::File => {
+                        if st.config.output_file.is_empty() {
+                            if let Some(w) = window_weak.upgrade() {
+                                w.set_status_text(
+                                    "No output file chosen — open Settings to select one".into(),
+                                );
+                                w.set_show_settings(true);
+                            }
+                            return;
+                        }
+                    }
                 }
 
                 if let Some(w) = window_weak.upgrade() {
@@ -257,6 +282,47 @@ fn main() -> Result<()> {
             let mut st = state_clone.lock().unwrap();
             st.config.inject_method = method;
             let _ = st.config.save();
+        });
+    }
+
+    // Output mode changed
+    {
+        let state_clone = state.clone();
+        window.on_output_mode_changed(move |idx| {
+            let mode = match idx {
+                1 => OutputMode::File,
+                _ => OutputMode::Inject,
+            };
+            let mut st = state_clone.lock().unwrap();
+            st.config.output_mode = mode;
+            let _ = st.config.save();
+        });
+    }
+
+    // Browse for output file
+    {
+        let window_weak = window.as_weak();
+        let state_clone = state.clone();
+        window.on_choose_output_file(move || {
+            let ww = window_weak.clone();
+            let sc = state_clone.clone();
+            thread::Builder::new()
+                .name("filepicker".into())
+                .spawn(move || {
+                    let chosen = open_file_dialog();
+                    if let Some(path) = chosen {
+                        let mut st = sc.lock().unwrap();
+                        st.config.output_file = path.clone();
+                        let _ = st.config.save();
+                        drop(st);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = ww.upgrade() {
+                                w.set_output_file_path(path.into());
+                            }
+                        });
+                    }
+                })
+                .expect("Failed to spawn filepicker thread");
         });
     }
 
@@ -446,6 +512,8 @@ fn run_whisper_thread(
 
     let inject_method = cfg.inject_method.clone();
     let inject_delay  = cfg.inject_delay_ms;
+    let output_mode   = cfg.output_mode.clone();
+    let output_file   = cfg.output_file.clone();
     let mut transcript_buf = String::new();
 
     // segment_rx implements IntoIterator — loop ends when VAD thread drops sender
@@ -467,7 +535,14 @@ fn run_whisper_thread(
         match engine.transcribe(&segment) {
             Ok(Some(text)) => {
                 log::info!("Transcribed: {:?}", text);
-                injector::inject_text(&text, &inject_method, inject_delay);
+                match output_mode {
+                    OutputMode::Inject => {
+                        injector::inject_text(&text, &inject_method, inject_delay);
+                    }
+                    OutputMode::File => {
+                        append_to_file(&output_file, &text);
+                    }
+                }
 
                 // Rolling transcript display (~200 chars)
                 if !transcript_buf.is_empty() {
@@ -529,4 +604,65 @@ fn run_whisper_thread(
     });
 
     log::info!("Whisper thread exited.");
+}
+
+// ─── File append helper ───────────────────────────────────────────────────────
+
+fn append_to_file(path: &str, text: &str) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut f) => {
+            if let Err(e) = write!(f, "{} ", text) {
+                log::error!("Failed to write to output file '{}': {}", path, e);
+            }
+        }
+        Err(e) => log::error!("Failed to open output file '{}': {}", path, e),
+    }
+}
+
+// ─── Native file picker ───────────────────────────────────────────────────────
+
+fn open_file_dialog() -> Option<String> {
+    // Try kdialog first (native on KDE/Plasma)
+    if let Ok(out) = std::process::Command::new("kdialog")
+        .args([
+            "--getsavefilename",
+            &dirs::home_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            "Text files (*.txt *.md *.org);;All files (*)",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+
+    // Fallback: zenity (GTK desktops / GNOME)
+    if let Ok(out) = std::process::Command::new("zenity")
+        .args([
+            "--file-selection",
+            "--save",
+            "--title=Choose output file",
+            "--file-filter=Text files|*.txt *.md *.org",
+            "--file-filter=All files|*",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+
+    log::warn!("No file picker available (kdialog and zenity not found)");
+    None
 }

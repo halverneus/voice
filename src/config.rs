@@ -41,6 +41,19 @@ impl Default for InjectMethod {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputMode {
+    Inject,
+    File,
+}
+
+impl Default for OutputMode {
+    fn default() -> Self {
+        OutputMode::Inject
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Model ID from MODELS list (e.g. "base.en")
@@ -78,6 +91,14 @@ pub struct Config {
     /// Delay in ms between receiving text and injecting it (helps with focus)
     #[serde(default = "default_inject_delay_ms")]
     pub inject_delay_ms: u64,
+
+    /// Where to send transcribed text: inject into focused window, or append to file
+    #[serde(default)]
+    pub output_mode: OutputMode,
+
+    /// Path to the file to append transcribed text to (used when output_mode = File)
+    #[serde(default)]
+    pub output_file: String,
 }
 
 fn default_model() -> String {
@@ -119,6 +140,8 @@ impl Default for Config {
             vad_threshold: default_vad_threshold(),
             silence_duration_ms: default_silence_ms(),
             inject_delay_ms: default_inject_delay_ms(),
+            output_mode: OutputMode::default(),
+            output_file: String::new(),
         }
     }
 }
